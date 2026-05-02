@@ -78,7 +78,7 @@ export default function AIChat({ width, project, onUpdateProject }: AIChatProps)
         1. NEVER BE LAZY. If asked to create a video, generate 10-15 scenes spanning 30-60 seconds.
         2. NARRATIVE FLOW: Every video needs a HOOK (bold intro), a JOURNEY (diverse visuals), a CLIMAX, and an OUTRO.
         3. DENSE DESIGN: Use advanced CSS. No simple centered text. Use glassmorphism, editorial corner layouts, and complex keyframe animations.
-        4. MULTIMEDIA: Always include background music (zIndex: -1, type: audio). Alternate between HTML text overlays and full-screen media assets.
+        4. SEQUENTIAL VARIETY: You MUST alternate between SCENE TYPE A (Editorial HTML), SCENE TYPE B (Full-screen Image), SCENE TYPE C (Full-screen Video), and SCENE TYPE D (Image with Text Overlay). Repeat the rotation A -> B -> C -> D throughout the project.
         5. TYPOGRAPHY: Header font: 'Poppins' (900 weight). Body: 'Lora' (Italic). Use 'cqw' units for responsiveness.
         6. SEARCH: Use concise, professional stock keywords for media_needs.` 
       },

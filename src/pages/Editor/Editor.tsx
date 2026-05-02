@@ -4,7 +4,6 @@ import { ChevronLeft, Save, Download } from 'lucide-react';
 import { Button } from '../../components/Button';
 import Timeline from './components/Timeline.tsx';
 import AgentPanel from './components/AgentPanel.tsx';
-import AssetManager from './components/AssetManager.tsx';
 import Canvas from './components/Canvas.tsx';
 import './Editor.css';
 
@@ -41,7 +40,6 @@ const Editor: React.FC = () => {
 
       {/* Main Workspace */}
       <main className="editor-workspace">
-        <AssetManager />
         
         <div className="center-workspace">
           <Canvas />

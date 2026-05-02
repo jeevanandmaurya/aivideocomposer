@@ -100,11 +100,13 @@ export async function downloadMedia(
 
     const blob = new Blob(chunks as any);
     const assetId = `asset_${Date.now()}`;
+    const url = URL.createObjectURL(blob);
+    
     const newAsset: Asset = {
       id: assetId,
       name: result.name,
       type: result.type,
-      url: '', 
+      url: url, 
       createdAt: Date.now()
     };
 

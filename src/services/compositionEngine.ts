@@ -142,27 +142,28 @@ export async function executeComposition(
       background: raw.background,
     };
 
-    // If this scene references a downloaded media asset
+    // If this scene references a downloaded media asset directly
     if (raw.mediaIndex !== undefined && raw.mediaIndex !== null) {
       const asset = downloadedAssets.get(raw.mediaIndex);
       if (asset) {
-        scene.type = asset.type as any;
+        scene.type = (raw.html ? 'html' : asset.type) as any;
         scene.assetId = asset.id;
       }
     } else if (raw.html) {
       scene.type = 'html';
-      
-      // Dynamic Media Insertion: Replace {{MEDIA_0}}, {{MEDIA_1}}... with real URLs
-      if (scene.html && scene.html.includes('{{MEDIA_')) {
-        let processedHtml: string | undefined = scene.html;
-        downloadedAssets.forEach((asset, index) => {
-          if (processedHtml) {
-            const placeholder = new RegExp(`{{MEDIA_${index}}}`, 'g');
-            processedHtml = processedHtml.replace(placeholder, asset.url);
-          }
-        });
-        scene.html = processedHtml;
-      }
+    }
+
+    // Dynamic Media Insertion: Replace {{MEDIA_0}}, {{MEDIA_1}}... with real URLs
+    if (scene.html && scene.html.includes('{{MEDIA_')) {
+      let processedHtml: string | undefined = scene.html;
+      downloadedAssets.forEach((asset, index) => {
+        if (processedHtml) {
+          const placeholder = new RegExp(`{{MEDIA_${index}}}`, 'g');
+          processedHtml = processedHtml.replace(placeholder, asset.url);
+        }
+      });
+      scene.html = processedHtml;
+      if (!scene.type) scene.type = 'html';
     }
 
     // Audio layers (zIndex < 0 or type=audio) run in parallel, not sequentially
