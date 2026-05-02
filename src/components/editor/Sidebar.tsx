@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Type, Layers, Image as ImageIcon, Film, Music, Upload, Trash2, Plus, Play, Search as SearchIcon, Download, Loader2 } from 'lucide-react';
+import { Type, Layers, Image as ImageIcon, Film, Music, Upload, Trash2, Plus, Play, Search as SearchIcon, Download, Loader2, Mic } from 'lucide-react';
 import { saveAsset, deleteAsset } from '../../utils/db';
 import { extractPeaks } from '../../utils/audio';
+import { captureVideoThumbnail } from '../../utils/video';
 import { searchMedia, downloadMedia } from '../../services/mediaService';
 import { generateTTS } from '../../services/ttsService';
 import type { SearchResult } from '../../services/mediaService';
@@ -15,7 +16,7 @@ const TABS = [
   { id: 'assets', icon: ImageIcon, label: 'Images' },
   { id: 'media', icon: Film, label: 'Video' },
   { id: 'audio', icon: Music, label: 'Audio' },
-  { id: 'voiceover', icon: Music, label: 'AI Voice' }
+  { id: 'voiceover', icon: Mic, label: 'AI Voice' }
 ];
 
 interface SidebarProps {
@@ -130,6 +131,12 @@ export default function Sidebar({ width, isMobile, onAddAsset, scenes = [], asse
             newAsset.peaks = await extractPeaks(file, 40);
           } catch (err) {
             console.error('Failed to extract peaks:', err);
+          }
+        } else if (type === 'video') {
+          try {
+            newAsset.thumbnail = await captureVideoThumbnail(file);
+          } catch (err) {
+            console.error('Failed to extract thumbnail:', err);
           }
         }
 

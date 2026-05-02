@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Volume2, Maximize } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Volume2, Maximize, Scissors, Trash2, GripVertical } from 'lucide-react';
 import type { Scene, Asset } from '../../types/video';
+import { saveAsset, getAssets } from '../../utils/db';
+import { extractPeaks } from '../../utils/audio';
+import { captureVideoThumbnail } from '../../utils/video';
 
 interface TimelineProps {
   scenes: Scene[];
@@ -21,26 +24,37 @@ const TimelineScene = ({
   zoom, 
   resizingSceneId, 
   onResizeStart,
-  onUpdateVolume
+  onUpdateVolume,
+  isSelected,
+  onSelect,
+  onDragStart
 }: { 
   scene: Scene, 
   assets: Asset[], 
   zoom: number, 
   resizingSceneId: string | null,
   onResizeStart: (e: React.MouseEvent, id: string) => void,
-  onUpdateVolume: (id: string, volume: number) => void
+  onUpdateVolume: (id: string, volume: number) => void,
+  isSelected: boolean,
+  onSelect: (id: string) => void,
+  onDragStart: (e: React.MouseEvent, id: string) => void
 }) => {
   const isAudio = scene.type === 'audio' || (scene.zIndex !== undefined && scene.zIndex < 0);
 
   return (
     <div 
+      onClick={(e) => { e.stopPropagation(); onSelect(scene.id); }}
+      onMouseDown={(e) => { 
+        if ((e.target as HTMLElement).closest('.resize-handle')) return;
+        onDragStart(e, scene.id);
+      }}
       style={{
         position: 'absolute',
         left: `${(scene.startTime * zoom) + 24}px`,
         width: `${scene.duration * zoom}px`,
         height: '100%',
-        background: 'var(--bg-primary)',
-        border: '1px solid var(--border-strong)',
+        background: isSelected ? 'var(--bg-accent)' : 'var(--bg-primary)',
+        border: isSelected ? `2px solid var(--brand-accent)` : '1px solid var(--border-strong)',
         borderTop: `3px solid ${isAudio ? '#10b981' : 'var(--brand-accent)'}`,
         display: 'flex',
         flexDirection: 'column',
@@ -53,9 +67,16 @@ const TimelineScene = ({
         color: 'var(--text-primary)',
         boxSizing: 'border-box',
         overflow: 'hidden',
-        zIndex: resizingSceneId === scene.id ? 20 : 1,
+        zIndex: isSelected || resizingSceneId === scene.id ? 20 : 1,
+        cursor: 'grab',
+        transition: 'border 0.2s, background 0.2s'
       }}
     >
+      {/* Drag Handle */}
+      <div style={{ position: 'absolute', left: 2, top: '50%', transform: 'translateY(-50%)', opacity: 0.3, pointerEvents: 'none' }}>
+        <GripVertical size={12} />
+      </div>
+
       {/* Media Preview (Image/Video Thumbnails) */}
       {(scene.type === 'image' || scene.type === 'video') && (
         <div style={{ 
@@ -67,8 +88,9 @@ const TimelineScene = ({
         }}>
           {(() => {
             const asset = assets.find(a => a.id === scene.assetId);
-            if (asset?.url) {
-              return <img src={asset.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />;
+            const previewUrl = scene.type === 'video' ? asset?.thumbnail : asset?.url;
+            if (previewUrl) {
+              return <img src={previewUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />;
             }
             return null;
           })()}
@@ -213,6 +235,10 @@ export default function Timeline({
   const [zoom, setZoom] = useState(20); // pixels per second
   const [isDragging, setIsDragging] = useState(false);
   const [resizingSceneId, setResizingSceneId] = useState<string | null>(null);
+  const [draggingSceneId, setDraggingSceneId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+  const [isDraggingFileOver, setIsDraggingFileOver] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll timeline to keep playhead in view
@@ -243,21 +269,36 @@ export default function Timeline({
     setResizingSceneId(id);
   };
 
+  const handleDragStart = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setSelectedSceneId(id);
+    const scene = scenes.find(s => s.id === id);
+    if (scene && timelineRef.current) {
+      const rect = timelineRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left + timelineRef.current.scrollLeft - 24;
+      setDragOffset((mouseX / zoom) - scene.startTime);
+      setDraggingSceneId(id);
+    }
+  };
+
   const handleMouseMove = (e: MouseEvent) => {
     if (isDragging) {
       handleSeek(e);
     } else if (resizingSceneId) {
       handleResize(e);
+    } else if (draggingSceneId) {
+      handleSceneMove(e);
     }
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
     setResizingSceneId(null);
+    setDraggingSceneId(null);
   };
 
   useEffect(() => {
-    if (isDragging || resizingSceneId) {
+    if (isDragging || resizingSceneId || draggingSceneId) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     }
@@ -265,7 +306,7 @@ export default function Timeline({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, resizingSceneId]);
+  }, [isDragging, resizingSceneId, draggingSceneId]);
 
   const handleSeek = (e: React.MouseEvent | MouseEvent) => {
     if (!timelineRef.current) return;
@@ -283,20 +324,78 @@ export default function Timeline({
     const targetScene = scenes.find(s => s.id === resizingSceneId);
     if (!targetScene) return;
 
-    const newDuration = Math.max(0.5, (x / zoom) - targetScene.startTime);
-    const newScenes = [...scenes];
-    const index = newScenes.findIndex(s => s.id === resizingSceneId);
-    newScenes[index] = { ...targetScene, duration: newDuration };
+    const newDuration = Math.max(0.1, (x / zoom) - targetScene.startTime);
+    const newScenes = scenes.map(s => s.id === resizingSceneId ? { ...s, duration: newDuration } : s);
+    onUpdateScenes(newScenes);
+  };
 
-    // Recalculate all subsequent start times
-    let currentStart = 0;
-    const updatedScenes = newScenes.map(s => {
-      const updated = { ...s, startTime: currentStart };
-      currentStart += s.duration;
-      return updated;
-    });
+  const handleSceneMove = (e: MouseEvent) => {
+    if (!timelineRef.current || !draggingSceneId) return;
+    const rect = timelineRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left + timelineRef.current.scrollLeft - 24;
+    
+    let newStartTime = Math.max(0, (mouseX / zoom) - dragOffset);
+    
+    // Simple snapping logic (optional, can be improved)
+    const snapThreshold = 0.15; // seconds
+    for (const other of scenes) {
+      if (other.id === draggingSceneId) continue;
+      // Snap to end of another scene
+      if (Math.abs(newStartTime - (other.startTime + other.duration)) < snapThreshold) {
+        newStartTime = other.startTime + other.duration;
+        break;
+      }
+      // Snap to start of another scene
+      if (Math.abs((newStartTime + (scenes.find(s => s.id === draggingSceneId)?.duration || 0)) - other.startTime) < snapThreshold) {
+        newStartTime = other.startTime - (scenes.find(s => s.id === draggingSceneId)?.duration || 0);
+        break;
+      }
+    }
 
-    onUpdateScenes(updatedScenes);
+    const newScenes = scenes.map(s => s.id === draggingSceneId ? { ...s, startTime: newStartTime } : s);
+    onUpdateScenes(newScenes);
+  };
+
+  const handleSplit = () => {
+    // Find all scenes at current playhead
+    const targetScenes = scenes.filter(s => currentTime > s.startTime && currentTime < s.startTime + s.duration);
+    if (targetScenes.length === 0) return;
+
+    // Prioritize selected scene, otherwise split the one on the highest track
+    const sceneToSplit = targetScenes.find(s => s.id === selectedSceneId) || 
+                       targetScenes.sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0))[0];
+
+    const leftDuration = currentTime - sceneToSplit.startTime;
+    const rightDuration = sceneToSplit.duration - leftDuration;
+
+    if (leftDuration < 0.1 || rightDuration < 0.1) return; // Too small to split
+
+    const firstHalf: Scene = { ...sceneToSplit, duration: leftDuration };
+    const secondHalf: Scene = { 
+      ...sceneToSplit, 
+      id: `scene_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      startTime: currentTime, 
+      duration: rightDuration 
+    };
+
+    const newScenes = scenes.reduce((acc: Scene[], s) => {
+      if (s.id === sceneToSplit.id) {
+        acc.push(firstHalf, secondHalf);
+      } else {
+        acc.push(s);
+      }
+      return acc;
+    }, []);
+
+    onUpdateScenes(newScenes);
+    setSelectedSceneId(secondHalf.id);
+  };
+
+  const handleDeleteScene = () => {
+    if (!selectedSceneId) return;
+    const newScenes = scenes.filter(s => s.id !== selectedSceneId);
+    onUpdateScenes(newScenes);
+    setSelectedSceneId(null);
   };
 
   const handleUpdateVolume = (id: string, volume: number) => {
@@ -321,6 +420,92 @@ export default function Timeline({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   };
 
+  const getMediaDuration = (file: File): Promise<number> => {
+    return new Promise((resolve) => {
+      const type = file.type.startsWith('video/') ? 'video' : 'audio';
+      const el = document.createElement(type);
+      el.preload = 'metadata';
+      el.onloadedmetadata = () => {
+        URL.revokeObjectURL(el.src);
+        resolve(el.duration);
+      };
+      el.onerror = () => resolve(type === 'video' ? 5 : 30); // Fallback
+      el.src = URL.createObjectURL(file);
+    });
+  };
+
+  const handleFileDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingFileOver(false);
+    if (!e.dataTransfer.files || !timelineRef.current) return;
+
+    const rect = timelineRef.current.getBoundingClientRect();
+    const dropX = e.clientX - rect.left + timelineRef.current.scrollLeft - 24;
+    const dropTime = Math.max(0, dropX / zoom);
+    
+    const files = Array.from(e.dataTransfer.files);
+    let currentDropTime = dropTime;
+    const addedScenes: Scene[] = [];
+
+    for (const file of files) {
+      const isImage = file.type.startsWith('image/');
+      const isVideo = file.type.startsWith('video/');
+      const isAudio = file.type.startsWith('audio/');
+      
+      if (!isImage && !isVideo && !isAudio) continue;
+
+      let type: Asset['type'] = isImage ? 'image' : isVideo ? 'video' : 'audio';
+      
+      const assetId = `asset_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      const newAsset: Asset = {
+        id: assetId,
+        name: file.name,
+        type,
+        url: '', // Will be populated by library refresh
+        createdAt: Date.now()
+      };
+
+      if (type === 'audio') {
+        try { newAsset.peaks = await extractPeaks(file, 40); } catch (err) { console.error(err); }
+      } else if (type === 'video') {
+        try { newAsset.thumbnail = await captureVideoThumbnail(file); } catch (err) { console.error(err); }
+      }
+
+      // 1. Save to Local DB (IndexedDB)
+      await saveAsset(newAsset, file);
+
+      // 2. Force library refresh to generate stable URL
+      const refreshedAssets = await getAssets(true);
+      const savedAsset = refreshedAssets.find(a => a.id === assetId);
+
+      if (savedAsset) {
+        let duration = 5;
+        if (type === 'video' || type === 'audio') {
+          duration = await getMediaDuration(file);
+        }
+
+        // 3. Create scene only after we have a stable URL
+        const newScene: Scene = {
+          id: `scene_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          text: file.name,
+          duration: duration,
+          startTime: currentDropTime,
+          zIndex: type === 'audio' ? -1 : (Math.max(0, ...scenes.filter(s => s.type !== 'audio').map(s => s.zIndex || 0)) + 1),
+          type,
+          assetId: savedAsset.id,
+          background: type === 'image' || type === 'video' ? 'transparent' : undefined
+        };
+
+        addedScenes.push(newScene);
+        currentDropTime += newScene.duration;
+      }
+    }
+
+    if (addedScenes.length > 0) {
+      onUpdateScenes([...scenes, ...addedScenes]);
+    }
+  };
+
   return (
     <div style={{ 
       height: isMobile ? '180px' : '220px', 
@@ -328,8 +513,26 @@ export default function Timeline({
       borderTop: '2px solid var(--border-strong)',
       display: 'flex',
       flexDirection: 'column',
-      userSelect: 'none'
+      userSelect: 'none',
+      position: 'relative'
     }}>
+      {isDraggingFileOver && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'var(--brand-accent-soft)',
+          border: '4px dashed var(--brand-accent)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none'
+        }}>
+          <div style={{ background: 'var(--bg-primary)', padding: '20px 40px', border: '2px solid var(--brand-accent)', fontWeight: 800, fontSize: '18px', color: 'var(--brand-accent)' }}>
+            DROP MEDIA TO TIMELINE
+          </div>
+        </div>
+      )}
       {/* Controls Bar */}
       <div style={{ 
         height: '48px', 
@@ -374,6 +577,26 @@ export default function Timeline({
               / {formatTime(duration)}
             </span>
           </div>
+
+          <div style={{ display: 'flex', gap: '4px', marginLeft: '12px', borderLeft: '1px solid var(--border-strong)', paddingLeft: '16px' }}>
+            <button 
+              onClick={handleSplit}
+              className="btn-secondary flex-center" 
+              style={{ gap: '8px', fontSize: '11px', fontWeight: 700 }}
+              title="Split at Playhead"
+            >
+              <Scissors size={14} /> SPLIT
+            </button>
+            <button 
+              onClick={handleDeleteScene}
+              disabled={!selectedSceneId}
+              className="btn-secondary flex-center" 
+              style={{ gap: '8px', fontSize: '11px', fontWeight: 700, color: selectedSceneId ? '#ef4444' : 'var(--text-tertiary)', borderColor: selectedSceneId ? 'rgba(239, 68, 68, 0.2)' : 'var(--border-strong)' }}
+              title="Delete Selected"
+            >
+              <Trash2 size={14} /> DELETE
+            </button>
+          </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px' }}>
@@ -390,13 +613,17 @@ export default function Timeline({
       <div 
         ref={timelineRef}
         onMouseDown={handleMouseDown}
+        onClick={() => setSelectedSceneId(null)}
+        onDragOver={(e) => { e.preventDefault(); setIsDraggingFileOver(true); }}
+        onDragLeave={() => setIsDraggingFileOver(false)}
+        onDrop={handleFileDrop}
         style={{ 
           flex: 1, 
           overflowX: 'auto', 
           overflowY: 'auto',
           position: 'relative',
           background: 'var(--bg-primary)',
-          cursor: isDragging ? 'grabbing' : 'default'
+          cursor: isDragging || draggingSceneId ? 'grabbing' : 'default'
         }}
       >
         <div style={{ 
@@ -451,7 +678,18 @@ export default function Timeline({
             }}>
               <div style={{ position: 'absolute', left: 4, top: 4, fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: 800, zIndex: 5 }}>V{trackIndex + 1}</div>
               {scenes.filter(s => s.type !== 'audio' && (s.zIndex || 0) === trackIndex).map((scene) => (
-                <TimelineScene key={scene.id} scene={scene} assets={assets} zoom={zoom} resizingSceneId={resizingSceneId} onResizeStart={handleResizeStart} onUpdateVolume={handleUpdateVolume} />
+                <TimelineScene 
+                  key={scene.id} 
+                  scene={scene} 
+                  assets={assets} 
+                  zoom={zoom} 
+                  resizingSceneId={resizingSceneId} 
+                  onResizeStart={handleResizeStart} 
+                  onUpdateVolume={handleUpdateVolume}
+                  isSelected={selectedSceneId === scene.id}
+                  onSelect={setSelectedSceneId}
+                  onDragStart={handleDragStart}
+                />
               ))}
             </div>
           ))}
@@ -470,7 +708,18 @@ export default function Timeline({
           }}>
             <div style={{ position: 'absolute', left: 4, top: 4, fontSize: '9px', color: '#10b981', fontWeight: 800, zIndex: 5 }}>A1 (MUSIC)</div>
             {scenes.filter(s => s.type === 'audio' || (s.zIndex !== undefined && s.zIndex < 0)).map((scene) => (
-              <TimelineScene key={scene.id} scene={scene} assets={assets} zoom={zoom} resizingSceneId={resizingSceneId} onResizeStart={handleResizeStart} onUpdateVolume={handleUpdateVolume} />
+              <TimelineScene 
+                key={scene.id} 
+                scene={scene} 
+                assets={assets} 
+                zoom={zoom} 
+                resizingSceneId={resizingSceneId} 
+                onResizeStart={handleResizeStart} 
+                onUpdateVolume={handleUpdateVolume}
+                isSelected={selectedSceneId === scene.id}
+                onSelect={setSelectedSceneId}
+                onDragStart={handleDragStart}
+              />
             ))}
           </div>
 

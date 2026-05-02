@@ -3,6 +3,7 @@ export interface Asset {
   name: string;
   type: 'image' | 'video' | 'audio' | 'script';
   url: string; // Object URL or base64 data
+  thumbnail?: string; // Data URL for video thumbnail
   peaks?: number[]; // Pre-computed audio peaks for waveform
   createdAt: number;
 }

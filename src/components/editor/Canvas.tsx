@@ -18,6 +18,7 @@ interface CanvasProps {
 
 const AudioLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { src: string, startTime: number, currentTime: number, isPlaying: boolean, volume?: number }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const isInitialPlay = useRef(true);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -25,14 +26,19 @@ const AudioLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { sr
     }
   }, [volume]);
 
+  // Sync only on seek or significant drift (> 0.5s)
   useEffect(() => {
     if (audioRef.current) {
       const offset = currentTime - startTime;
-      if (Math.abs(audioRef.current.currentTime - offset) > 0.1) {
+      const drift = Math.abs(audioRef.current.currentTime - offset);
+      
+      // If we just started or there is a major drift (user seeked), force sync
+      if (isInitialPlay.current || drift > 0.5) {
         audioRef.current.currentTime = offset;
+        isInitialPlay.current = false;
       }
     }
-  }, [startTime, currentTime]); // Added currentTime for seeking sync
+  }, [startTime, currentTime]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -44,21 +50,21 @@ const AudioLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { sr
     }
   }, [isPlaying]);
 
-  return <audio ref={audioRef} src={src} style={{ display: 'none' }} />;
+  return <audio ref={audioRef} src={src} preload="auto" style={{ display: 'none' }} />;
 };
 
 const VideoLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, startTime: number, currentTime: number, isPlaying: boolean }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Sync only on seek or significant drift (> 0.5s)
   useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && !videoRef.current.seeking) {
       const offset = currentTime - startTime;
-      // Sync video time if it drifts or when seeking
-      if (Math.abs(videoRef.current.currentTime - offset) > 0.15) {
+      if (Math.abs(videoRef.current.currentTime - offset) > 0.5) {
         videoRef.current.currentTime = offset;
       }
     }
-  }, [startTime, currentTime]);
+  }, [startTime, currentTime, src]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -68,7 +74,12 @@ const VideoLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, s
         videoRef.current.pause();
       }
     }
-  }, [isPlaying]);
+  }, [isPlaying, src]);
+
+  const handleVideoError = (e: any) => {
+    console.warn("Video playback error for", src, e);
+    // Removed aggressive global refresh to prevent infinite re-render loops
+  };
 
   return (
     <video 
@@ -78,6 +89,8 @@ const VideoLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, s
       muted 
       playsInline 
       loop
+      preload="auto"
+      onError={handleVideoError}
     />
   );
 };
@@ -122,7 +135,7 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
     .filter(s => s.type !== 'audio' && currentTime >= s.startTime && currentTime < s.startTime + s.duration)
     .sort((a,b) => (a.zIndex || 0) - (b.zIndex || 0));
 
-  const baseBackground = visualScenes[0]?.background || 'var(--bg-primary)';
+  const baseBackground = visualScenes[0]?.background || '#000000';
 
   // Auto-hide controls
   useEffect(() => {
@@ -171,7 +184,7 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
         display: 'flex', 
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--bg-primary)',
+        background: '#0a0a0a',
         position: 'relative',
         overflow: 'hidden',
         padding: isFullScreen ? '0' : '24px',
@@ -249,7 +262,12 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
                   }}
                 >
                   {scene.type === 'image' && asset && (
-                    <img src={asset.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={scene.text} />
+                    <img 
+                      src={asset.url} 
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                      alt={scene.text} 
+                      onError={() => (window as any).refreshAppAssets?.()}
+                    />
                   )}
                   {scene.type === 'video' && asset && (
                     <VideoLayer src={asset.url} startTime={scene.startTime} currentTime={currentTime} isPlaying={isPlaying} />

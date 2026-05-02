@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Plus, Video, Sparkles, ArrowRight, Moon, Sun } from 'lucide-react';
+import { Plus, Video, Sparkles, ArrowRight, Moon, Sun, Trash2 } from 'lucide-react';
 import type { VideoProject } from '../types/video';
 import { EXAMPLES } from './Editor';
 import { useTheme } from '../contexts/ThemeContext';
@@ -33,6 +33,15 @@ export default function Dashboard() {
     setProjects(updated);
     localStorage.setItem('user_projects', JSON.stringify(updated));
     navigate(`/editor/${newProject.id}`);
+  };
+
+  const deleteProject = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+      const updated = projects.filter(p => p.id !== id);
+      setProjects(updated);
+      localStorage.setItem('user_projects', JSON.stringify(updated));
+    }
   };
 
   const scrollToExamples = () => {
@@ -140,7 +149,12 @@ export default function Dashboard() {
           }}>
             {projects.map((project, index) => (
               <motion.div key={project.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.1 }}>
-                <ProjectCard project={project} isMobile={isMobile} onClick={() => navigate(`/editor/${project.id}`)} />
+                <ProjectCard 
+                  project={project} 
+                  isMobile={isMobile} 
+                  onClick={() => navigate(`/editor/${project.id}`)} 
+                  onDelete={(e) => deleteProject(project.id, e)}
+                />
               </motion.div>
             ))}
           </div>
@@ -266,7 +280,7 @@ export default function Dashboard() {
   );
 }
 
-function ProjectCard({ project, isMobile, onClick }: { project: VideoProject, isMobile: boolean, onClick: () => void }) {
+function ProjectCard({ project, isMobile, onClick, onDelete }: { project: VideoProject, isMobile: boolean, onClick: () => void, onDelete?: (e: React.MouseEvent) => void }) {
   return (
     <div 
       onClick={onClick}
@@ -339,8 +353,43 @@ function ProjectCard({ project, isMobile, onClick }: { project: VideoProject, is
           display: 'flex',
           alignItems: 'center'
         }}>
-          {project.aspectRatio || '16:9'}
+        {project.aspectRatio || '16:9'}
         </div>
+
+        {onDelete && (
+          <button 
+            onClick={onDelete}
+            style={{
+              position: 'absolute',
+              top: '12px',
+              left: '12px',
+              width: '32px',
+              height: '32px',
+              background: 'rgba(255, 69, 58, 0.1)',
+              border: '1px solid rgba(255, 69, 58, 0.2)',
+              color: '#FF453A',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10,
+              backdropFilter: 'blur(4px)',
+              transition: 'all var(--transition-fast)'
+            }}
+            className="hover-scale"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#FF453A';
+              e.currentTarget.style.color = 'white';
+              e.currentTarget.style.borderColor = '#FF453A';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 69, 58, 0.1)';
+              e.currentTarget.style.color = '#FF453A';
+              e.currentTarget.style.borderColor = 'rgba(255, 69, 58, 0.2)';
+            }}
+          >
+            <Trash2 size={16} strokeWidth={3} />
+          </button>
+        )}
       </div>
       
       {/* Content */}
