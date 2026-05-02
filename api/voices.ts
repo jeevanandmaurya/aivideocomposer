@@ -10,6 +10,6 @@ const VOICES = [
   { id: 'SAz9YHcvj6GT2YYXdXww', name: 'River', category: 'Character' },
 ];
 
-export default async function handler(req: any, res: any) {
+export default async function handler(_req: any, res: any) {
   res.status(200).json({ voices: VOICES });
 }
