@@ -359,9 +359,10 @@ export default function Editor() {
         });
       };
 
-      const getSceneHtml = (scene: any, timeOffset: number) => {
+      const getSceneHtml = (scene: any, timeOffset: number, isOverlay: boolean) => {
+        const bg = isOverlay ? 'transparent !important' : (scene.background || 'transparent');
         return `
-          <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-family: Inter, sans-serif; margin: 0; padding: 0; overflow: hidden; background: transparent;">
+          <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-family: Inter, sans-serif; margin: 0; padding: 0; overflow: hidden; background: ${bg};">
             <style>
               .cinematic-vignette { position: absolute; inset: 0; background: radial-gradient(circle, transparent 20%, rgba(0,0,0,0.5) 100%); pointer-events: none; }
               .film-grain { position: absolute; inset: 0; background-image: url('/noise.svg'); opacity: 0.05; pointer-events: none; }
@@ -447,13 +448,48 @@ export default function Editor() {
           .filter(s => s.type !== 'audio' && time >= s.startTime && time < s.startTime + s.duration)
           .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
         
+        // 1. Parallel Execution: Start seeking and rendering HTML simultaneously
+        const videoSeeks: { video: HTMLVideoElement, time: number }[] = [];
+        const htmlRenders: { scene: any, offset: number }[] = [];
+
+        for (const scene of activeVisuals) {
+          const asset = getAsset(scene.assetId);
+          if (asset?.type === 'video') {
+            const video = videoSeekerCache.get(asset.id);
+            if (video) videoSeeks.push({ video, time: (time - scene.startTime) % video.duration });
+          } else if (!scene.type || scene.type === 'text' || scene.type === 'html') {
+            htmlRenders.push({ scene, offset: time - scene.startTime });
+          }
+        }
+
+        // Trigger all Seeks
+        const seekPromises = videoSeeks.map(vs => seekVideo(vs.video, vs.time));
+        
+        // Trigger all HTML Renders
+        const htmlPromises = htmlRenders.map(async (hr) => {
+          const isOverlay = activeVisuals.some(s => s !== hr.scene && (s.type === 'image' || s.type === 'video'));
+          let sceneHtml = getSceneHtml(hr.scene, hr.offset, isOverlay);
+          if (sceneHtml.includes('{{MEDIA_')) {
+            activeVisuals.forEach((s, idx) => {
+              const b64 = s.assetId ? base64ForHtmlCache.get(s.assetId) : null;
+              if (b64) sceneHtml = sceneHtml.replace(new RegExp(`{{MEDIA_${idx}}}`, 'g'), b64);
+            });
+          }
+          return { img: await htmlToImage(sceneHtml, w, h), scene: hr.scene };
+        });
+
+        // Wait for everything in this frame to be ready
+        const [_, renderedHtmlLayers] = await Promise.all([
+          Promise.all(seekPromises),
+          Promise.all(htmlPromises)
+        ]);
+
+        // 2. Compositing: Now that everything is ready, draw to canvas
         ctx.fillStyle = 'black';
         ctx.fillRect(0, 0, w, h);
 
         for (const scene of activeVisuals) {
           const asset = getAsset(scene.assetId);
-          
-          // 1. Handle Background Media (Images & Videos)
           if (asset) {
             if (asset.type === 'image') {
               const img = imageCache.get(asset.id);
@@ -466,8 +502,6 @@ export default function Editor() {
             } else if (asset.type === 'video') {
               const video = videoSeekerCache.get(asset.id);
               if (video) {
-                const offset = time - scene.startTime;
-                await seekVideo(video, offset % video.duration);
                 const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
                 const vx = (w - video.videoWidth * scale) / 2;
                 const vy = (h - video.videoHeight * scale) / 2;
@@ -476,23 +510,9 @@ export default function Editor() {
             }
           }
 
-          // 2. Handle Text/HTML Overlays
-          if (!scene.type || scene.type === 'text' || scene.type === 'html') {
-            const offset = time - scene.startTime;
-            let sceneHtml = getSceneHtml(scene, offset);
-            
-            // Replace media placeholders in HTML with Base64 (only if needed)
-            if (sceneHtml.includes('{{MEDIA_')) {
-              activeVisuals.forEach((s, idx) => {
-                const b64 = s.assetId ? base64ForHtmlCache.get(s.assetId) : null;
-                if (b64) sceneHtml = sceneHtml.replace(new RegExp(`{{MEDIA_${idx}}}`, 'g'), b64);
-              });
-            }
-
-            try {
-              const img = await htmlToImage(sceneHtml, w, h);
-              ctx.drawImage(img, 0, 0);
-            } catch (e) { console.error("HTML Render Error:", e); }
+          const htmlLayer = renderedHtmlLayers.find(l => l.scene.id === scene.id);
+          if (htmlLayer) {
+            ctx.drawImage(htmlLayer.img, 0, 0);
           }
         }
 
