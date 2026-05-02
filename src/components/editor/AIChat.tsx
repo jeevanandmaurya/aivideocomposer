@@ -80,7 +80,9 @@ export default function AIChat({ width, project, onUpdateProject }: AIChatProps)
         3. DENSE DESIGN: Use advanced CSS. No simple centered text. Use glassmorphism, editorial corner layouts, and complex keyframe animations.
         4. SEQUENTIAL VARIETY: You MUST alternate between SCENE TYPE A (Editorial HTML), SCENE TYPE B (Full-screen Image), SCENE TYPE C (Full-screen Video), and SCENE TYPE D (Image with Text Overlay). Repeat the rotation A -> B -> C -> D throughout the project.
         5. TYPOGRAPHY: Header font: 'Poppins' (900 weight). Body: 'Lora' (Italic). Use 'cqw' units for responsiveness.
-        6. SEARCH: Use concise, professional stock keywords for media_needs.` 
+        6. SEARCH: Use concise, professional stock keywords for media_needs.
+        7. RESPONSIVE DESIGN: You MUST adapt layouts for the current aspect ratio. For 9:16 (Vertical), use stacked layouts and larger fonts (15cqw). For 16:9 (Horizontal), use side-by-side. ALWAYS use 'overflow:hidden' and 'word-wrap:break-word' to prevent content spill.
+        8. STYLING CREATIVITY: Do not be repetitive. Choose a MOOD (e.g., TECH NOIR, MINIMALIST STUDIO, LUXURY EDITORIAL) and vary your CSS (colors, grid-ratios, mix-blend-modes, and blur filters) to match.` 
       },
       ...newMessages
     ];
@@ -266,6 +268,7 @@ export default function AIChat({ width, project, onUpdateProject }: AIChatProps)
           const latest = steps[steps.length - 1];
           const isSearching = latest.phase === 'searching';
           const isDownloading = latest.phase === 'downloading';
+          const isGeneratingTTS = latest.phase === 'generating_tts';
           const isDone = latest.phase === 'downloaded';
           const isFailed = latest.phase === 'search_failed';
 
@@ -279,20 +282,26 @@ export default function AIChat({ width, project, onUpdateProject }: AIChatProps)
               border: `1px solid ${isDone ? 'var(--brand-accent)' : isFailed ? '#ef4444' : 'var(--border-strong)'}`,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {'mediaType' in latest && <MediaIcon type={latest.mediaType} />}
+                {isGeneratingTTS ? <Music size={14} color="var(--brand-accent)" /> : ('mediaType' in latest && <MediaIcon type={latest.mediaType} />)}
                 <span style={{ 
                   fontSize: '11px', 
                   fontWeight: 700, 
                   flex: 1,
                   color: isDone ? 'var(--brand-accent)' : isFailed ? '#ef4444' : 'var(--text-primary)'
                 }}>
-                  {'query' in latest ? latest.query : ''}
+                  {isGeneratingTTS ? 'AI Voiceover' : ('query' in latest ? latest.query : '')}
                 </span>
-                {isSearching && <Search size={12} className="animate-spin" color="var(--brand-accent)" />}
+                {(isSearching || isGeneratingTTS) && <Search size={12} className="animate-spin" color="var(--brand-accent)" />}
                 {isDownloading && <Download size={12} color="var(--brand-accent)" />}
                 {isDone && <CheckCircle size={14} color="var(--brand-accent)" />}
                 {isFailed && <XCircle size={14} color="#ef4444" />}
               </div>
+
+              {isGeneratingTTS && (
+                <div style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                   "{(latest as any).text.slice(0, 40)}..."
+                </div>
+              )}
 
               {isSearching && (
                 <div style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>

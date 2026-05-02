@@ -18,6 +18,7 @@ export interface Scene {
   html?: string;
   background?: string;
   style?: any;
+  volume?: number; // 0 to 1
 }
 
 export interface VideoProject {

@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { Type, Layers, Image as ImageIcon, Film, Music, Upload, Trash2, Plus, Play, Search as SearchIcon, Download, Loader2 } from 'lucide-react';
 import { saveAsset, deleteAsset } from '../../utils/db';
 import { extractPeaks } from '../../utils/audio';
 import { searchMedia, downloadMedia } from '../../services/mediaService';
+import { generateTTS } from '../../services/ttsService';
 import type { SearchResult } from '../../services/mediaService';
 import type { Asset, Scene } from '../../types/video';
 
@@ -12,7 +14,8 @@ const TABS = [
   { id: 'components', icon: Layers, label: 'UI Library' },
   { id: 'assets', icon: ImageIcon, label: 'Images' },
   { id: 'media', icon: Film, label: 'Video' },
-  { id: 'audio', icon: Music, label: 'Audio' }
+  { id: 'audio', icon: Music, label: 'Audio' },
+  { id: 'voiceover', icon: Music, label: 'AI Voice' }
 ];
 
 interface SidebarProps {
@@ -87,33 +90,130 @@ export default function Sidebar({ width, isMobile, onAddAsset, scenes = [], asse
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
-    let type: Asset['type'] = 'image';
-    if (file.type.startsWith('video/')) type = 'video';
-    else if (file.type.startsWith('audio/')) type = 'audio';
-    else if (file.name.endsWith('.txt')) type = 'script';
+  const processFiles = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
 
-    const newAsset: Asset = {
-      id: `asset_${Date.now()}`,
-      name: file.name,
-      type,
-      url: '', 
-      createdAt: Date.now()
-    };
+    setIsUploading(true);
+    setUploadError(null);
 
-    if (type === 'audio') {
-      try {
-        newAsset.peaks = await extractPeaks(file, 40);
-      } catch (err) {
-        console.error('Failed to extract peaks:', err);
+    try {
+      for (const file of Array.from(files)) {
+        // Validate support formats
+        const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.name);
+        const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov)$/i.test(file.name);
+        const isAudio = file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a)$/i.test(file.name);
+        const isScript = file.type === 'text/plain' || file.name.endsWith('.txt');
+
+        if (!isImage && !isVideo && !isAudio && !isScript) {
+          throw new Error(`Unsupported file format: ${file.name}`);
+        }
+
+        let type: Asset['type'] = 'image';
+        if (isVideo) type = 'video';
+        else if (isAudio) type = 'audio';
+        else if (isScript) type = 'script';
+
+        const newAsset: Asset = {
+          id: `asset_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          name: file.name,
+          type,
+          url: '', 
+          createdAt: Date.now()
+        };
+
+        if (type === 'audio') {
+          try {
+            newAsset.peaks = await extractPeaks(file, 40);
+          } catch (err) {
+            console.error('Failed to extract peaks:', err);
+          }
+        }
+
+        await saveAsset(newAsset, file);
       }
-    }
+      
+      const firstFile = files[0];
+      if (files.length === 1) {
+        if (firstFile.type.startsWith('image/')) setActiveTab('assets');
+        else if (firstFile.type.startsWith('video/')) setActiveTab('media');
+        else if (firstFile.type.startsWith('audio/')) setActiveTab('audio');
+      }
 
-    await saveAsset(newAsset, file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err: any) {
+      setUploadError(err.message || 'Upload failed');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      processFiles(e.target.files);
+      e.target.value = '';
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    if (e.dataTransfer.files) {
+      processFiles(e.dataTransfer.files);
+    }
+  };
+
+  // TTS State
+  const [ttsText, setTtsText] = useState('');
+  const [selectedVoice, setSelectedVoice] = useState(''); 
+  const [dynamicVoices, setDynamicVoices] = useState<{id: string, name: string, category: string, preview?: string}[]>([]);
+  const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchVoices = async () => {
+      const defaultVoices = [
+        { id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', category: 'Male' },
+        { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah', category: 'Female' },
+        { id: 'SAz9YHcvj6GT2YYXdXww', name: 'River', category: 'Character' },
+      ];
+
+      try {
+        const response = await fetch('/api/voices');
+        const data = await response.json();
+        if (data.voices && data.voices.length > 0) {
+          setDynamicVoices(data.voices);
+          setSelectedVoice(data.voices[0].id);
+        } else {
+          setDynamicVoices(defaultVoices);
+          setSelectedVoice(defaultVoices[0].id);
+        }
+      } catch (err) {
+        console.error('Failed to load voices, using defaults:', err);
+        setDynamicVoices(defaultVoices);
+        setSelectedVoice(defaultVoices[0].id);
+      }
+    };
+    fetchVoices();
+  }, []);
+
+  const handleGenerateTTS = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ttsText.trim()) return;
+
+    setIsGeneratingTTS(true);
+    setTtsError(null);
+    try {
+      await generateTTS(ttsText, selectedVoice);
+      setTtsText('');
+      setActiveTab('audio'); // Switch to audio tab to see the new asset
+    } catch (err: any) {
+      setTtsError(err.message || 'TTS generation failed');
+    } finally {
+      setIsGeneratingTTS(false);
+    }
   };
 
   return (
@@ -133,8 +233,9 @@ export default function Sidebar({ width, isMobile, onAddAsset, scenes = [], asse
       <input 
         type="file" 
         ref={fileInputRef} 
+        multiple
         style={{ display: 'none' }} 
-        accept={activeTab === 'assets' ? 'image/*' : activeTab === 'media' ? 'video/*' : 'audio/*'} 
+        accept={activeTab === 'assets' ? 'image/*' : activeTab === 'media' ? 'video/*,video/quicktime' : activeTab === 'audio' ? 'audio/*' : 'image/*,video/*,audio/*'} 
         onChange={handleFileUpload}
       />
       {/* Tab Navigation */}
@@ -501,13 +602,55 @@ export default function Sidebar({ width, isMobile, onAddAsset, scenes = [], asse
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
-              <button 
+              <div 
                 onClick={() => fileInputRef.current?.click()}
-                className="btn-secondary" 
-                style={{ fontSize: '11px', padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexShrink: 0 }}
+                onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                onDragLeave={() => setIsDraggingOver(false)}
+                onDrop={handleDrop}
+                className="panel"
+                style={{ 
+                  padding: '24px', 
+                  border: isDraggingOver ? '2px solid var(--brand-accent)' : '1px dashed var(--border-strong)', 
+                  textAlign: 'center', 
+                  cursor: 'pointer',
+                  background: isUploading ? 'var(--bg-accent)' : isDraggingOver ? 'var(--brand-accent-soft)' : 'var(--bg-primary)',
+                  transition: 'all 0.2s',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  transform: isDraggingOver ? 'scale(1.02)' : 'scale(1)',
+                }}
               >
-                <Upload size={14} /> UPLOAD {activeTab.toUpperCase()}
-              </button>
+                {isUploading ? (
+                  <div className="flex-center" style={{ gap: '12px', fontSize: '11px', fontWeight: 800, color: 'var(--brand-accent)' }}>
+                    <Loader2 size={16} className="animate-spin" />
+                    PROCESSING...
+                  </div>
+                ) : (
+                  <>
+                    <Upload size={24} color={isDraggingOver ? 'var(--brand-accent)' : 'var(--text-tertiary)'} style={{ marginBottom: '12px' }} />
+                    <div style={{ fontSize: '11px', fontWeight: 900, color: isDraggingOver ? 'var(--brand-accent)' : 'var(--text-primary)', letterSpacing: '0.05em' }}>
+                      {isDraggingOver ? 'DROP TO UPLOAD' : 'CLICK OR DRAG TO UPLOAD'}
+                    </div>
+                    <div style={{ fontSize: '9px', color: 'var(--text-tertiary)', marginTop: '6px', fontWeight: 600 }}>
+                      {activeTab === 'assets' ? 'JPG, PNG, WEBP, GIF, SVG' : activeTab === 'media' ? 'MP4, WEBM, MOV' : 'MP3, WAV, M4A'}
+                    </div>
+                  </>
+                )}
+                {isUploading && (
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: '100%' }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                    style={{ position: 'absolute', bottom: 0, left: 0, height: '3px', background: 'var(--brand-accent)' }} 
+                  />
+                )}
+              </div>
+              
+              {uploadError && (
+                <div style={{ padding: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', color: '#ef4444', fontSize: '10px', fontWeight: 700 }}>
+                  {uploadError}
+                </div>
+              )}
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {usedAssets.length > 0 && (
@@ -535,8 +678,108 @@ export default function Sidebar({ width, isMobile, onAddAsset, scenes = [], asse
             </div>
           );
         })()}
+
+        {activeTab === 'voiceover' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+             <div style={{ fontSize: '10px', fontWeight: 800, color: 'var(--brand-accent)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '4px', borderBottom: '1px solid var(--border-strong)', paddingBottom: '4px' }}>
+                ElevenLabs Generation
+              </div>
+              <form onSubmit={handleGenerateTTS} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-tertiary)' }}>SELECT VOICE</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select 
+                      value={selectedVoice}
+                      onChange={(e) => setSelectedVoice(e.target.value)}
+                      style={{ 
+                        flex: 1,
+                        background: 'var(--bg-primary)', 
+                        border: '1px solid var(--border-strong)', 
+                        padding: '10px', 
+                        fontSize: '12px',
+                        color: 'var(--text-primary)',
+                        borderRadius: '0'
+                      }}
+                    >
+                      {dynamicVoices.map(v => (
+                        <option key={v.id} value={v.id}>{v.name} ({v.category})</option>
+                      ))}
+                    </select>
+                    {dynamicVoices.find(v => v.id === selectedVoice)?.preview && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          const preview = dynamicVoices.find(v => v.id === selectedVoice)?.preview;
+                          if (preview) new Audio(preview).play();
+                        }}
+                        style={{ 
+                          padding: '0 12px', 
+                          background: 'var(--bg-secondary)', 
+                          border: '1px solid var(--border-strong)',
+                          color: 'var(--brand-accent)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <Play size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-tertiary)' }}>TEXT TO SPEAK</label>
+                  <textarea 
+                    value={ttsText}
+                    onChange={(e) => setTtsText(e.target.value)}
+                    placeholder="Type your narration here..."
+                    style={{ 
+                      background: 'var(--bg-primary)', 
+                      border: '1px solid var(--border-strong)', 
+                      padding: '12px', 
+                      fontSize: '13px',
+                      color: 'var(--text-primary)',
+                      minHeight: '120px',
+                      resize: 'vertical',
+                      lineHeight: 1.5,
+                      fontFamily: 'Lora, serif'
+                    }}
+                  />
+                </div>
+
+                <button 
+                  type="submit" 
+                  disabled={isGeneratingTTS || !ttsText.trim()}
+                  className="btn-primary" 
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', opacity: isGeneratingTTS || !ttsText.trim() ? 0.6 : 1 }}
+                >
+                  {isGeneratingTTS ? <Loader2 size={18} className="animate-spin" /> : <Music size={18} />}
+                  {isGeneratingTTS ? 'GENERATING AUDIO...' : 'CREATE VOICEOVER'}
+                </button>
+
+                {ttsError && (
+                  <div style={{ padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', color: '#ef4444', fontSize: '11px', fontWeight: 700 }}>
+                    {ttsError}
+                  </div>
+                )}
+
+                <div style={{ 
+                  padding: '16px', 
+                  background: 'var(--bg-accent)', 
+                  border: '1px solid var(--border-strong)',
+                  fontSize: '11px',
+                  color: 'var(--text-tertiary)',
+                  lineHeight: 1.6
+                }}>
+                  <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>Note:</strong>
+                  ElevenLabs provides high-fidelity AI voices. Ensure your <code style={{ background: 'var(--bg-primary)', padding: '2px 4px' }}>ELEVENLABS_API_KEY</code> is set in your environment variables.
+                </div>
+              </form>
+          </div>
+        )}
       </div>
-      <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+
       <audio 
         ref={audioRef} 
         style={{ display: 'none' }} 

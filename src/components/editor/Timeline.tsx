@@ -20,14 +20,18 @@ const TimelineScene = ({
   assets, 
   zoom, 
   resizingSceneId, 
-  onResizeStart 
+  onResizeStart,
+  onUpdateVolume
 }: { 
   scene: Scene, 
   assets: Asset[], 
   zoom: number, 
   resizingSceneId: string | null,
-  onResizeStart: (e: React.MouseEvent, id: string) => void
+  onResizeStart: (e: React.MouseEvent, id: string) => void,
+  onUpdateVolume: (id: string, volume: number) => void
 }) => {
+  const isAudio = scene.type === 'audio' || (scene.zIndex !== undefined && scene.zIndex < 0);
+
   return (
     <div 
       style={{
@@ -37,7 +41,7 @@ const TimelineScene = ({
         height: '100%',
         background: 'var(--bg-primary)',
         border: '1px solid var(--border-strong)',
-        borderTop: `3px solid ${scene.type === 'audio' ? '#10b981' : 'var(--brand-accent)'}`,
+        borderTop: `3px solid ${isAudio ? '#10b981' : 'var(--brand-accent)'}`,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'flex-start',
@@ -89,11 +93,19 @@ const TimelineScene = ({
         </div>
       )}
 
-      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', zIndex: 2 }}>
-        {scene.text}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', zIndex: 2, gap: '8px' }}>
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {scene.text || (isAudio ? 'Audio Clip' : 'Scene')}
+        </span>
+        {isAudio && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: '2px' }}>
+            <Volume2 size={10} color="#10b981" />
+            <span style={{ fontSize: '8px', color: '#10b981', minWidth: '20px' }}>{Math.round((scene.volume ?? 1) * 100)}%</span>
+          </div>
+        )}
+      </div>
 
-      {scene.type === 'audio' && (() => {
+      {isAudio && (() => {
         const asset = assets.find(a => a.id === scene.assetId);
         const peaks = asset?.peaks || Array.from({ length: 40 }).map((_, i) => {
           const seed = (scene.id.charCodeAt(i % scene.id.length) || 0) + i;
@@ -101,31 +113,65 @@ const TimelineScene = ({
         });
         
         return (
-          <div style={{ 
-            position: 'absolute', 
-            bottom: 0, 
-            left: 0, 
-            right: 0, 
-            height: '70%', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '1px', 
-            padding: '0 4px',
-            opacity: 0.4,
-            pointerEvents: 'none'
-          }}>
-            {peaks.map((peak, i) => (
-              <div 
-                key={i} 
-                style={{ 
-                  flex: 1, 
-                  background: '#10b981', 
-                  height: `${Math.max(10, peak * 100)}%`,
-                  borderRadius: '1px'
-                }} 
+          <>
+            <div style={{ 
+              position: 'absolute', 
+              bottom: 0, 
+              left: 0, 
+              right: 0, 
+              height: '50%', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1px', 
+              padding: '0 4px',
+              opacity: 0.4,
+              pointerEvents: 'none'
+            }}>
+              {peaks.map((peak, i) => (
+                <div 
+                  key={i} 
+                  style={{ 
+                    flex: 1, 
+                    background: '#10b981', 
+                    height: `${Math.max(10, peak * 100)}%`,
+                    borderRadius: '1px'
+                  }} 
+                />
+              ))}
+            </div>
+            
+            {/* Volume Control Overlay */}
+            <div style={{ 
+              position: 'absolute', 
+              bottom: '4px', 
+              left: '12px', 
+              right: '12px', 
+              zIndex: 10,
+              display: 'flex',
+              alignItems: 'center',
+              height: '12px'
+            }}>
+              <input 
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={scene.volume ?? 1}
+                onChange={(e) => onUpdateVolume(scene.id, parseFloat(e.target.value))}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  width: '100%',
+                  height: '2px',
+                  appearance: 'none',
+                  background: 'rgba(255,255,255,0.1)',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  accentColor: '#10b981'
+                }}
               />
-            ))}
-          </div>
+            </div>
+          </>
         );
       })()}
     
@@ -251,6 +297,16 @@ export default function Timeline({
     });
 
     onUpdateScenes(updatedScenes);
+  };
+
+  const handleUpdateVolume = (id: string, volume: number) => {
+    const newScenes = scenes.map(s => {
+      if (s.id === id) {
+        return { ...s, volume };
+      }
+      return s;
+    });
+    onUpdateScenes(newScenes);
   };
 
   const formatTime = (seconds: number, compact?: boolean) => {
@@ -395,7 +451,7 @@ export default function Timeline({
             }}>
               <div style={{ position: 'absolute', left: 4, top: 4, fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: 800, zIndex: 5 }}>V{trackIndex + 1}</div>
               {scenes.filter(s => s.type !== 'audio' && (s.zIndex || 0) === trackIndex).map((scene) => (
-                <TimelineScene key={scene.id} scene={scene} assets={assets} zoom={zoom} resizingSceneId={resizingSceneId} onResizeStart={handleResizeStart} />
+                <TimelineScene key={scene.id} scene={scene} assets={assets} zoom={zoom} resizingSceneId={resizingSceneId} onResizeStart={handleResizeStart} onUpdateVolume={handleUpdateVolume} />
               ))}
             </div>
           ))}
@@ -414,7 +470,7 @@ export default function Timeline({
           }}>
             <div style={{ position: 'absolute', left: 4, top: 4, fontSize: '9px', color: '#10b981', fontWeight: 800, zIndex: 5 }}>A1 (MUSIC)</div>
             {scenes.filter(s => s.type === 'audio' || (s.zIndex !== undefined && s.zIndex < 0)).map((scene) => (
-              <TimelineScene key={scene.id} scene={scene} assets={assets} zoom={zoom} resizingSceneId={resizingSceneId} onResizeStart={handleResizeStart} />
+              <TimelineScene key={scene.id} scene={scene} assets={assets} zoom={zoom} resizingSceneId={resizingSceneId} onResizeStart={handleResizeStart} onUpdateVolume={handleUpdateVolume} />
             ))}
           </div>
 

@@ -13,6 +13,7 @@
     "@ai-sdk/openai": "^3.0.53",
     "@ai-sdk/openai-compatible": "^2.0.41",
     "@api/nim": "file:.api/apis/nim",
+    "@elevenlabs/elevenlabs-js": "^2.45.0",
     "ai": "^6.0.168",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.12.0",

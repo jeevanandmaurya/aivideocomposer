@@ -40,7 +40,6 @@ const Editor: React.FC = () => {
 
       {/* Main Workspace */}
       <main className="editor-workspace">
-        
         <div className="center-workspace">
           <Canvas />
           <Timeline />

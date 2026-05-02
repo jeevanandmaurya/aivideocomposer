@@ -1,10 +1,13 @@
 import { searchMedia, downloadMedia } from './mediaService';
+import { generateTTS } from './ttsService';
 import type { Asset, Scene, VideoProject } from '../types/video';
 
 export interface MediaNeed {
-  type: 'image' | 'video' | 'audio';
-  query: string;
+  type: 'image' | 'video' | 'audio' | 'voiceover';
+  query: string; // for voiceover, this is the text to speak
   purpose: string;
+  voiceId?: string;
+  voiceName?: string;
 }
 
 export interface CompositionScene {
@@ -17,6 +20,7 @@ export interface CompositionScene {
   html?: string;
   background?: string;
   mediaIndex?: number; // index into media_needs array
+  volume?: number;
 }
 
 export interface CompositionPlan {
@@ -32,6 +36,7 @@ export type CompositionStep =
   | { phase: 'downloading'; mediaIndex: number; query: string; mediaType: string; progress: number }
   | { phase: 'downloaded'; mediaIndex: number; query: string; mediaType: string; assetId: string }
   | { phase: 'search_failed'; mediaIndex: number; query: string; mediaType: string; error: string }
+  | { phase: 'generating_tts'; mediaIndex: number; text: string }
   | { phase: 'building'; message: string }
   | { phase: 'complete'; project: Partial<VideoProject> };
 
@@ -51,6 +56,37 @@ export async function executeComposition(
   // --- Phase 1: Search and download all media ---
   for (let i = 0; i < plan.media_needs.length; i++) {
     const need = plan.media_needs[i];
+
+    if (need.type === 'voiceover') {
+      onStep({
+        phase: 'generating_tts',
+        mediaIndex: i,
+        text: need.query,
+      });
+
+      try {
+        const asset = await generateTTS(need.query, need.voiceId, (need as any).voiceName);
+        if (asset) {
+          downloadedAssets.set(i, asset);
+          onStep({
+            phase: 'downloaded',
+            mediaIndex: i,
+            query: need.query,
+            mediaType: 'voiceover',
+            assetId: asset.id,
+          });
+        }
+      } catch (err: any) {
+        onStep({
+          phase: 'search_failed',
+          mediaIndex: i,
+          query: need.query,
+          mediaType: 'voiceover',
+          error: err.message || 'TTS Generation failed',
+        });
+      }
+      continue;
+    }
 
     // Report: searching
     onStep({
@@ -140,6 +176,7 @@ export async function executeComposition(
       zIndex: raw.zIndex,
       html: raw.html,
       background: raw.background,
+      volume: raw.volume,
     };
 
     // If this scene references a downloaded media asset directly
@@ -166,10 +203,10 @@ export async function executeComposition(
       if (!scene.type) scene.type = 'html';
     }
 
-    // Audio layers (zIndex < 0 or type=audio) run in parallel, not sequentially
+    // Audio layers: Background music (zIndex -1) usually starts at 0. 
+    // Voiceovers (zIndex -2) or specific audio cues should follow the visual timeline or use an explicit startTime.
     if (scene.type === 'audio' || (scene.zIndex !== undefined && scene.zIndex < 0)) {
-      scene.startTime = 0; // audio starts at the beginning
-      // Duration spans the full video length — we'll fix it after calculating total
+      scene.startTime = raw.startTime !== undefined ? raw.startTime : 0;
     } else {
       scene.startTime = currentStart;
       currentStart += scene.duration;
@@ -178,10 +215,11 @@ export async function executeComposition(
     finalScenes.push(scene);
   }
 
-  // Fix audio layer duration to span the full visual timeline
+  // Fix background music duration to span the full visual timeline
+  // We only do this for the "master" audio track (usually zIndex -1)
   const totalVisualDuration = currentStart;
   for (const scene of finalScenes) {
-    if (scene.type === 'audio' || (scene.zIndex !== undefined && scene.zIndex < 0)) {
+    if (scene.zIndex === -1) {
       scene.duration = totalVisualDuration;
     }
   }

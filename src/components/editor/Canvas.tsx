@@ -16,8 +16,14 @@ interface CanvasProps {
   aspectRatio?: '16:9' | '9:16';
 }
 
-const AudioLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, startTime: number, currentTime: number, isPlaying: boolean }) => {
+const AudioLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { src: string, startTime: number, currentTime: number, isPlaying: boolean, volume?: number }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -39,6 +45,41 @@ const AudioLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, s
   }, [isPlaying]);
 
   return <audio ref={audioRef} src={src} style={{ display: 'none' }} />;
+};
+
+const VideoLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, startTime: number, currentTime: number, isPlaying: boolean }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      const offset = currentTime - startTime;
+      // Sync video time if it drifts or when seeking
+      if (Math.abs(videoRef.current.currentTime - offset) > 0.15) {
+        videoRef.current.currentTime = offset;
+      }
+    }
+  }, [startTime, currentTime]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
+
+  return (
+    <video 
+      ref={videoRef} 
+      src={src} 
+      style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+      muted 
+      playsInline 
+      loop
+    />
+  );
 };
 
 const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({ 
@@ -180,6 +221,7 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
               startTime={scene.startTime}
               currentTime={currentTime}
               isPlaying={isPlaying}
+              volume={scene.volume}
             />
           );
         })}
@@ -210,7 +252,7 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
                     <img src={asset.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={scene.text} />
                   )}
                   {scene.type === 'video' && asset && (
-                    <video src={asset.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay loop muted playsInline />
+                    <VideoLayer src={asset.url} startTime={scene.startTime} currentTime={currentTime} isPlaying={isPlaying} />
                   )}
                   {(!scene.type || scene.type === 'text' || scene.type === 'html') && (
                     <div style={{ padding: '8cqw', width: '100%', height: '100%', boxSizing: 'border-box' }}>

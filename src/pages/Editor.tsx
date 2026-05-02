@@ -8,7 +8,7 @@ import Timeline from '../components/editor/Timeline';
 import AIChat from '../components/editor/AIChat';
 import Canvas from '../components/editor/Canvas';
 import { getAssets } from '../utils/db';
-import type { VideoProject, Asset } from '../types/video';
+import type { VideoProject, Asset, Scene } from '../types/video';
 import rawExamples from '../data/examples.json';
 
 // Parse examples from JSON file (simulating AI response parsing)
@@ -142,26 +142,47 @@ export default function Editor() {
 
   const handleAddAssetToTimeline = (asset: any) => {
     if (!project) return;
-    const maxZIndex = project.scenes.length > 0 ? Math.max(0, ...project.scenes.map(s => s.zIndex || 0)) : -1;
-    const newScene = {
-      id: `scene_${Date.now()}`,
+    
+    // Determine track and layer
+    const isAudio = asset.type === 'audio';
+    const visualScenes = project.scenes.filter(s => s.type !== 'audio');
+    const maxZIndex = visualScenes.length > 0 ? Math.max(0, ...visualScenes.map(s => s.zIndex || 0)) : -1;
+    
+    const newScene: Scene = {
+      id: `scene_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
       text: asset.name,
-      duration: 5,
+      duration: asset.type === 'audio' ? 30 : 5, // Default durations
       startTime: currentTime,
-      zIndex: maxZIndex + 1,
+      zIndex: isAudio ? -1 : maxZIndex + 1,
       type: asset.type,
-      assetId: asset.id
+      assetId: asset.id,
+      background: asset.type === 'image' || asset.type === 'video' ? 'transparent' : undefined
     };
+
     setProject({
       ...project,
       scenes: [...project.scenes, newScene]
     });
+
+    // Provide feedback
+    console.log(`Added ${asset.type} asset to timeline at ${currentTime}s`);
   };
 
   // Real Hardware-Accelerated Export Logic
   const startRealExport = async () => {
     if (!project) return;
     
+    const finishExport = (msg?: string) => {
+      setIsExporting(false);
+      setIsExportModalOpen(false);
+      setExportProgress(0);
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+      if (msg) alert(msg);
+    };
+
     setIsExporting(true);
     setExportProgress(0);
     setIsPlaying(false);
@@ -182,30 +203,27 @@ export default function Editor() {
     }
 
     const fps = selectedFps;
-    const totalDuration = duration;
-    const totalFrames = Math.ceil(totalDuration * fps);
+    const duration = project.scenes.reduce((max, s) => Math.max(max, s.startTime + s.duration), 0);
+    const totalFrames = Math.ceil(duration * fps);
     const codec = selectedResolution === '4k' ? 'avc1.640034' : 'avc1.4d002a';
+    const sampleRate = 44100;
 
     // 1. Initialize Worker
     const worker = new ExportWorker();
     workerRef.current = worker;
 
-    const waitForMessage = (type: string) => new Promise<any>(resolve => {
+    const waitForMessage = (type: string) => new Promise<any>((resolve, reject) => {
       const handler = (e: MessageEvent) => {
         if (e.data.type === type) {
           worker.removeEventListener('message', handler);
           resolve(e.data);
+        } else if (e.data.type === 'error') {
+          worker.removeEventListener('message', handler);
+          reject(new Error(e.data.error || 'Worker Error'));
         }
       };
       worker.addEventListener('message', handler);
     });
-
-    worker.postMessage({
-      type: 'configure',
-      data: { width: w, height: h, bitrate: selectedResolution === '4k' ? 25000000 : 8000000, codec, fps }
-    });
-
-    await waitForMessage('configured');
 
     worker.onmessage = (e) => {
       const { type, buffer, error } = e.data;
@@ -224,165 +242,217 @@ export default function Editor() {
       }
     };
 
-    const finishExport = (msg?: string) => {
-      setIsExporting(false);
-      setIsExportModalOpen(false);
-      setExportProgress(0);
-      if (workerRef.current) {
-        workerRef.current.terminate();
-        workerRef.current = null;
-      }
-      if (msg) alert(msg);
-    };
-
-    // 2. SVG foreignObject Rendering Logic
-    const htmlToImage = (html: string, width: number, height: number): Promise<HTMLImageElement> => {
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" style="text-rendering: geometricPrecision; shape-rendering: geometricPrecision;">
-          <foreignObject width="100%" height="100%" style="overflow: visible;">
-            <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%; container-type: inline-size; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
-              ${html}
-            </div>
-          </foreignObject>
-        </svg>
-      `;
-      
-      const base64 = btoa(unescape(encodeURIComponent(svg)));
-      const url = `data:image/svg+xml;base64,${base64}`;
-
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = async () => {
-          try {
-            if ('decode' in img) await img.decode();
-            resolve(img);
-          } catch (e) {
-            reject(e);
-          }
-        };
-        img.onerror = () => {
-          reject(new Error(`Failed to render SVG frame`));
-        };
-        img.src = url;
+    try {
+      console.log("🎬 Initializing Export Engine...");
+      worker.postMessage({
+        type: 'configure',
+        data: { width: w, height: h, bitrate: selectedResolution === '4k' ? 25000000 : 8000000, codec, fps, sampleRate }
       });
-    };
 
-    const getSceneHtml = (scene: any, time: number) => {
-      const transitionDuration = Math.min(0.5, scene.duration / 2);
-      const sceneElapsed = time - scene.startTime;
-      const sceneRemaining = (scene.startTime + scene.duration) - time;
+      await waitForMessage('configured');
+      console.log("✅ Engine Configured.");
+
+      // 1.5 AUDIO MIXDOWN
+      console.log("🎵 Mixing Master Soundtrack...");
+      const audioContext = new OfflineAudioContext(2, Math.max(1, Math.floor(duration * sampleRate)), sampleRate);
+      const audioScenes = project.scenes.filter(s => s.type === 'audio' || (s.zIndex !== undefined && s.zIndex < 0));
       
-      let opacity = 1;
-      let scale = 1;
+      for (const scene of audioScenes) {
+        const asset = globalAssets.find(a => a.id === scene.assetId);
+        if (!asset) continue;
 
-      if (sceneElapsed < transitionDuration) {
-        const progress = sceneElapsed / transitionDuration;
-        opacity = progress;
-        scale = 0.95 + (0.05 * progress);
-      } else if (sceneRemaining < transitionDuration) {
-        const progress = 1 - (sceneRemaining / transitionDuration);
-        opacity = 1 - progress;
-        scale = 1 + (0.05 * progress);
-      }
-
-      const charCount = scene.text.length || 1;
-      const fontSizeFactor = Math.max(3, Math.min(8.5, 350 / charCount));
-      const fontSize = `${fontSizeFactor}vw`;
-
-      return `
-        <div style="
-          width: 100%; 
-          height: 100%; 
-          display: flex; 
-          align-items: center; 
-          justify-content: center; 
-          background: ${scene.background || 'radial-gradient(circle at 50% 50%, #1a1a2e 0%, #050505 100%)'};
-          color: white;
-          font-family: Inter, system-ui, sans-serif;
-          text-rendering: optimizeLegibility;
-          -webkit-font-smoothing: antialiased;
-          margin: 0;
-          padding: 0;
-          overflow: hidden;
-        ">
-          <style>
-            * {
-              animation-play-state: paused !important;
-              animation-delay: -${time}s !important;
-            }
-          </style>
-          <div style="
-            text-align: center;
-            padding: 8vw;
-            opacity: ${opacity};
-            transform: scale(${scale});
-            width: 100%;
-            box-sizing: border-box;
-          ">
-            ${scene.html ? scene.html : `
-              <h2 style="
-                font-size: ${fontSize};
-                font-weight: 800;
-                line-height: 1.1;
-                margin: 0;
-                text-shadow: 0 0.5vw 2vw rgba(0,0,0,0.8);
-                word-wrap: break-word;
-              ">${scene.text}</h2>
-            `}
-          </div>
-        </div>
-      `;
-    };
-
-    // 3. Main Export Loop
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = w;
-    exportCanvas.height = h;
-    const ctx = exportCanvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
-    
-    ctx.imageSmoothingEnabled = false;
-
-    for (let currentFrame = 0; currentFrame < totalFrames; currentFrame++) {
-      if (cancelExportRef.current) {
-        finishExport();
-        return;
-      }
-
-      const time = currentFrame / fps;
-      const scene = project.scenes.find(s => time >= s.startTime && time < s.startTime + s.duration);
-      
-      ctx.clearRect(0, 0, w, h);
-
-      if (scene) {
-        const html = getSceneHtml(scene, time);
         try {
-          const img = await htmlToImage(html, w, h);
-          ctx.drawImage(img, 0, 0);
+          const resp = await fetch(asset.url);
+          const arrayBuffer = await resp.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
           
-          if (img.src.startsWith('blob:')) {
-            URL.revokeObjectURL(img.src);
-          }
-        } catch (e) {
-          console.error("Frame skip:", e);
+          const source = audioContext.createBufferSource();
+          source.buffer = audioBuffer;
+          
+          const gainNode = audioContext.createGain();
+          gainNode.gain.value = scene.volume ?? 1;
+          
+          source.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          
+          source.start(scene.startTime);
+        } catch (err) {
+          console.error("Audio mix error:", err);
         }
       }
 
-      const bitmap = await createImageBitmap(exportCanvas);
-      worker.postMessage({
-        type: 'frame',
-        data: { frameIndex: currentFrame, bitmap }
-      }, [bitmap]);
-
-      await waitForMessage('frame_done');
-
-      if (currentFrame % 5 === 0 || currentFrame === totalFrames - 1) {
-        setExportProgress(Math.round((currentFrame / totalFrames) * 100));
-        setCurrentTime(time);
+      const renderedBuffer = await audioContext.startRendering();
+      console.log("✅ Audio Mixed. Streaming to Encoder...");
+      
+      const chunkSize = sampleRate * 0.5;
+      for (let i = 0; i < renderedBuffer.length; i += chunkSize) {
+        const length = Math.min(chunkSize, renderedBuffer.length - i);
+        const chan0 = renderedBuffer.getChannelData(0).slice(i, i + length);
+        const chan1 = renderedBuffer.getChannelData(1).slice(i, i + length);
+        
+        worker.postMessage({
+          type: 'audio_chunk',
+          data: {
+            chan0,
+            chan1,
+            timestamp: (i / sampleRate) * 1000000
+          }
+        }, [chan0.buffer, chan1.buffer]);
+        
+        await waitForMessage('audio_done');
       }
-    }
+      console.log("✅ Audio Encoded.");
 
-    worker.postMessage({ type: 'finalize' });
+      // 2. SVG foreignObject Rendering Logic
+      const blobToBase64 = async (url: string): Promise<string> => {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error("Fetch failed");
+          const blob = await resp.blob();
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn("Base64 conversion failed for", url, e);
+          return url;
+        }
+      };
+
+      const noiseBase64 = await blobToBase64('/noise.svg');
+
+      const htmlToImage = (html: string, width: number, height: number): Promise<HTMLImageElement> => {
+        const processedHtml = html
+          .replace(/url\(['"]?\/noise\.svg['"]?\)/g, `url('${noiseBase64}')`)
+          .replace(/url\(['"]?https:\/\/grainy-gradients\.vercel\.app\/noise\.svg['"]?\)/g, `url('${noiseBase64}')`);
+        
+        const svg = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+            <foreignObject width="100%" height="100%">
+              <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%; container-type: inline-size; margin:0; padding:0;">
+                ${processedHtml}
+              </div>
+            </foreignObject>
+          </svg>
+        `;
+        
+        const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = (e) => reject(e);
+          img.src = url;
+        });
+      };
+
+      const getSceneHtml = (scene: any) => {
+        return `
+          <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-family: Inter, sans-serif; margin: 0; padding: 0; overflow: hidden; background: transparent;">
+            <style>
+              .cinematic-vignette { position: absolute; inset: 0; background: radial-gradient(circle, transparent 20%, rgba(0,0,0,0.5) 100%); pointer-events: none; }
+              .film-grain { position: absolute; inset: 0; background-image: url('/noise.svg'); opacity: 0.05; pointer-events: none; }
+            </style>
+            <div style="width:100%; height:100%; position:relative;">
+              ${scene.html ? scene.html : `
+                <div style="padding: 8vw; text-align: center; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+                  <h2 style="font-size: 6vw; font-weight: 800; line-height: 1.1; margin: 0; text-shadow: 0 0.5vw 2vw rgba(0,0,0,0.8);">${scene.text}</h2>
+                </div>
+              `}
+            </div>
+          </div>
+        `;
+      };
+
+      // 3. Main Export Loop
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = w;
+      exportCanvas.height = h;
+      const ctx = exportCanvas.getContext('2d', { alpha: false });
+      if (!ctx) return;
+      
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      const freshAssets = await getAssets();
+      setGlobalAssets(freshAssets);
+      const getAsset = (id?: string) => freshAssets.find(a => a.id === id);
+
+      console.log("📦 Pre-caching assets...");
+      const base64Cache = new Map<string, string>();
+      for (const scene of project.scenes) {
+        const asset = getAsset(scene.assetId);
+        if (asset && !base64Cache.has(asset.id)) {
+          base64Cache.set(asset.id, await blobToBase64(asset.url));
+        }
+      }
+
+      console.log("🎞️ Starting Frame Render Loop...");
+      for (let currentFrame = 0; currentFrame < totalFrames; currentFrame++) {
+        if (cancelExportRef.current) {
+          finishExport();
+          return;
+        }
+
+        const time = currentFrame / fps;
+        const activeVisuals = project.scenes
+          .filter(s => s.type !== 'audio' && time >= s.startTime && time < s.startTime + s.duration)
+          .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+        
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, w, h);
+
+        for (const scene of activeVisuals) {
+          const asset = getAsset(scene.assetId);
+          const base64 = asset ? base64Cache.get(asset.id) : null;
+          
+          if (base64 && (scene.type === 'image' || scene.type === 'video')) {
+            try {
+              const img = new Image();
+              img.src = base64;
+              await new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = resolve;
+              });
+              const scale = Math.max(w / img.width, h / img.height);
+              const x = (w - img.width * scale) / 2;
+              const y = (h - img.height * scale) / 2;
+              ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+            } catch (e) { console.error(e); }
+          }
+
+          if (!scene.type || scene.type === 'text' || scene.type === 'html') {
+            let sceneHtml = getSceneHtml(scene);
+            if (sceneHtml.includes('{{MEDIA_')) {
+              activeVisuals.forEach((s, idx) => {
+                const b64 = s.assetId ? base64Cache.get(s.assetId) : null;
+                if (b64) sceneHtml = sceneHtml.replace(new RegExp(`{{MEDIA_${idx}}}`, 'g'), b64);
+              });
+            }
+            try {
+              const img = await htmlToImage(sceneHtml, w, h);
+              ctx.drawImage(img, 0, 0);
+            } catch (e) { console.error(e); }
+          }
+        }
+
+        const bitmap = await createImageBitmap(exportCanvas);
+        worker.postMessage({ type: 'frame', data: { frameIndex: currentFrame, bitmap } }, [bitmap]);
+        await waitForMessage('frame_done');
+
+        if (currentFrame % 10 === 0 || currentFrame === totalFrames - 1) {
+          setExportProgress(Math.round((currentFrame / totalFrames) * 100));
+          setCurrentTime(time);
+        }
+      }
+
+      worker.postMessage({ type: 'finalize' });
+    } catch (err: any) {
+      console.error("❌ Export Error:", err);
+      alert("Export failed: " + err.message);
+      finishExport();
+    }
   };
 
   const handleCancelExport = () => {
@@ -390,7 +460,7 @@ export default function Editor() {
   };
 
   const duration = project?.scenes && project.scenes.length > 0 
-    ? project.scenes.reduce((acc, s) => acc + s.duration, 0) 
+    ? Math.max(0, ...project.scenes.map(s => (s.startTime || 0) + s.duration))
     : 0;
 
   useEffect(() => {
