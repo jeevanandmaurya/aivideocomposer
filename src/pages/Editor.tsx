@@ -36,6 +36,7 @@ export default function Editor() {
 
   const workerRef = useRef<Worker | null>(null);
   const cancelExportRef = useRef(false);
+  const videoCache = useRef<Map<string, HTMLVideoElement>>(new Map());
 
   const [lastSaved, setLastSaved] = useState<number>(Date.now());
 
@@ -180,6 +181,13 @@ export default function Editor() {
         workerRef.current.terminate();
         workerRef.current = null;
       }
+      // Clean up video cache
+      videoCache.current.forEach(v => {
+        v.pause();
+        v.src = "";
+        v.load();
+      });
+      videoCache.current.clear();
       if (msg) alert(msg);
     };
 
@@ -257,8 +265,12 @@ export default function Editor() {
       const audioContext = new OfflineAudioContext(2, Math.max(1, Math.floor(duration * sampleRate)), sampleRate);
       const audioScenes = project.scenes.filter(s => s.type === 'audio' || (s.zIndex !== undefined && s.zIndex < 0));
       
+      const freshAssets = await getAssets();
+      setGlobalAssets(freshAssets);
+      const getAsset = (id?: string) => freshAssets.find(a => a.id === id);
+
       for (const scene of audioScenes) {
-        const asset = globalAssets.find(a => a.id === scene.assetId);
+        const asset = getAsset(scene.assetId);
         if (!asset) continue;
 
         try {
@@ -347,14 +359,20 @@ export default function Editor() {
         });
       };
 
-      const getSceneHtml = (scene: any) => {
+      const getSceneHtml = (scene: any, timeOffset: number) => {
         return `
           <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-family: Inter, sans-serif; margin: 0; padding: 0; overflow: hidden; background: transparent;">
             <style>
               .cinematic-vignette { position: absolute; inset: 0; background: radial-gradient(circle, transparent 20%, rgba(0,0,0,0.5) 100%); pointer-events: none; }
               .film-grain { position: absolute; inset: 0; background-image: url('/noise.svg'); opacity: 0.05; pointer-events: none; }
+              @keyframes fade-in { from { opacity: 0; transform: scale(1.05); } to { opacity: 1; transform: scale(1); } }
+              .animate-scene { 
+                animation: fade-in 1s ease-out forwards; 
+                animation-delay: -${timeOffset}s !important;
+                animation-play-state: paused !important;
+              }
             </style>
-            <div style="width:100%; height:100%; position:relative;">
+            <div style="width:100%; height:100%; position:relative;" class="animate-scene">
               ${scene.html ? scene.html : `
                 <div style="padding: 8vw; text-align: center; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
                   <h2 style="font-size: 6vw; font-weight: 800; line-height: 1.1; margin: 0; text-shadow: 0 0.5vw 2vw rgba(0,0,0,0.8);">${scene.text}</h2>
@@ -375,20 +393,49 @@ export default function Editor() {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      const freshAssets = await getAssets();
-      setGlobalAssets(freshAssets);
-      const getAsset = (id?: string) => freshAssets.find(a => a.id === id);
+      // Advanced Frame-by-Frame Video Seeker
+      const videoSeekerCache = new Map<string, HTMLVideoElement>();
+      const seekVideo = (video: HTMLVideoElement, time: number): Promise<void> => {
+        return new Promise((resolve) => {
+          const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked);
+            resolve();
+          };
+          video.addEventListener('seeked', onSeeked);
+          video.currentTime = time;
+        });
+      };
 
-      console.log("📦 Pre-caching assets...");
-      const base64Cache = new Map<string, string>();
+      console.log("📦 Pre-caching visual assets...");
+      const imageCache = new Map<string, HTMLImageElement>();
+      const base64ForHtmlCache = new Map<string, string>(); // Only for HTML overlays
+
       for (const scene of project.scenes) {
         const asset = getAsset(scene.assetId);
-        if (asset && !base64Cache.has(asset.id)) {
-          base64Cache.set(asset.id, await blobToBase64(asset.url));
+        if (!asset) continue;
+
+        if (asset.type === 'image') {
+          const img = new Image();
+          img.src = asset.url;
+          await new Promise(r => img.onload = r);
+          imageCache.set(asset.id, img);
+          // Also need base64 if this image is used inside an HTML overlay
+          base64ForHtmlCache.set(asset.id, await blobToBase64(asset.url));
+        } else if (asset.type === 'video') {
+          if (!videoSeekerCache.has(asset.id)) {
+            const video = document.createElement('video');
+            video.src = asset.url;
+            video.muted = true;
+            video.playsInline = true;
+            video.preload = "auto";
+            await new Promise(r => video.onloadedmetadata = r);
+            videoCache.current.set(asset.id, video); // Keep track for cleanup
+            videoSeekerCache.set(asset.id, video);
+          }
         }
       }
 
-      console.log("🎞️ Starting Frame Render Loop...");
+      console.log("🎞️ Starting High-Fidelity Render Loop...");
       for (let currentFrame = 0; currentFrame < totalFrames; currentFrame++) {
         if (cancelExportRef.current) {
           finishExport();
@@ -405,35 +452,47 @@ export default function Editor() {
 
         for (const scene of activeVisuals) {
           const asset = getAsset(scene.assetId);
-          const base64 = asset ? base64Cache.get(asset.id) : null;
           
-          if (base64 && (scene.type === 'image' || scene.type === 'video')) {
-            try {
-              const img = new Image();
-              img.src = base64;
-              await new Promise((resolve) => {
-                img.onload = resolve;
-                img.onerror = resolve;
-              });
-              const scale = Math.max(w / img.width, h / img.height);
-              const x = (w - img.width * scale) / 2;
-              const y = (h - img.height * scale) / 2;
-              ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-            } catch (e) { console.error(e); }
+          // 1. Handle Background Media (Images & Videos)
+          if (asset) {
+            if (asset.type === 'image') {
+              const img = imageCache.get(asset.id);
+              if (img) {
+                const scale = Math.max(w / img.width, h / img.height);
+                const x = (w - img.width * scale) / 2;
+                const y = (h - img.height * scale) / 2;
+                ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+              }
+            } else if (asset.type === 'video') {
+              const video = videoSeekerCache.get(asset.id);
+              if (video) {
+                const offset = time - scene.startTime;
+                await seekVideo(video, offset % video.duration);
+                const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
+                const vx = (w - video.videoWidth * scale) / 2;
+                const vy = (h - video.videoHeight * scale) / 2;
+                ctx.drawImage(video, vx, vy, video.videoWidth * scale, video.videoHeight * scale);
+              }
+            }
           }
 
+          // 2. Handle Text/HTML Overlays
           if (!scene.type || scene.type === 'text' || scene.type === 'html') {
-            let sceneHtml = getSceneHtml(scene);
+            const offset = time - scene.startTime;
+            let sceneHtml = getSceneHtml(scene, offset);
+            
+            // Replace media placeholders in HTML with Base64 (only if needed)
             if (sceneHtml.includes('{{MEDIA_')) {
               activeVisuals.forEach((s, idx) => {
-                const b64 = s.assetId ? base64Cache.get(s.assetId) : null;
+                const b64 = s.assetId ? base64ForHtmlCache.get(s.assetId) : null;
                 if (b64) sceneHtml = sceneHtml.replace(new RegExp(`{{MEDIA_${idx}}}`, 'g'), b64);
               });
             }
+
             try {
               const img = await htmlToImage(sceneHtml, w, h);
               ctx.drawImage(img, 0, 0);
-            } catch (e) { console.error(e); }
+            } catch (e) { console.error("HTML Render Error:", e); }
           }
         }
 
@@ -441,13 +500,16 @@ export default function Editor() {
         worker.postMessage({ type: 'frame', data: { frameIndex: currentFrame, bitmap } }, [bitmap]);
         await waitForMessage('frame_done');
 
-        if (currentFrame % 10 === 0 || currentFrame === totalFrames - 1) {
+        if (currentFrame % 5 === 0 || currentFrame === totalFrames - 1) {
           setExportProgress(Math.round((currentFrame / totalFrames) * 100));
           setCurrentTime(time);
         }
       }
 
       worker.postMessage({ type: 'finalize' });
+      
+      // Cleanup
+      videoSeekerCache.forEach(v => { v.src = ""; v.load(); });
     } catch (err: any) {
       console.error("❌ Export Error:", err);
       alert("Export failed: " + err.message);
