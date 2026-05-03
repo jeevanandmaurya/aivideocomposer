@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Volume2, Maximize, Scissors, Trash2, GripVertical } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Volume2, VolumeX, Maximize, Scissors, Trash2, GripVertical } from 'lucide-react';
 import type { Scene, Asset } from '../../types/video';
 import { saveAsset, getAssets } from '../../utils/db';
 import { extractPeaks } from '../../utils/audio';
@@ -16,6 +16,10 @@ interface TimelineProps {
   onToggleFullScreen: () => void;
   isMobile?: boolean;
   assets?: Asset[];
+  masterVolume?: number;
+  onVolumeChange?: (v: number) => void;
+  isMuted?: boolean;
+  onToggleMute?: () => void;
 }
 
 const TimelineScene = ({ 
@@ -119,15 +123,15 @@ const TimelineScene = ({
         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {scene.text || (isAudio ? 'Audio Clip' : 'Scene')}
         </span>
-        {isAudio && (
+        {(isAudio || scene.type === 'video') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: '2px' }}>
-            <Volume2 size={10} color="#10b981" />
-            <span style={{ fontSize: '8px', color: '#10b981', minWidth: '20px' }}>{Math.round((scene.volume ?? 1) * 100)}%</span>
+            <Volume2 size={10} color={isAudio ? "#10b981" : "var(--brand-accent)"} />
+            <span style={{ fontSize: '8px', color: isAudio ? "#10b981" : "var(--brand-accent)", minWidth: '20px' }}>{Math.round((scene.volume ?? 1) * 100)}%</span>
           </div>
         )}
       </div>
 
-      {isAudio && (() => {
+      {(isAudio || scene.type === 'video') && (() => {
         const asset = assets.find(a => a.id === scene.assetId);
         const peaks = asset?.peaks || Array.from({ length: 40 }).map((_, i) => {
           const seed = (scene.id.charCodeAt(i % scene.id.length) || 0) + i;
@@ -189,7 +193,7 @@ const TimelineScene = ({
                   background: 'rgba(255,255,255,0.1)',
                   outline: 'none',
                   cursor: 'pointer',
-                  accentColor: '#10b981'
+                  accentColor: isAudio ? '#10b981' : 'var(--brand-accent)'
                 }}
               />
             </div>
@@ -230,8 +234,13 @@ export default function Timeline({
   onTogglePlay, 
   onToggleFullScreen,
   isMobile,
-  assets = []
+  assets = [],
+  masterVolume = 1,
+  onVolumeChange,
+  isMuted = false,
+  onToggleMute
 }: TimelineProps) {
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [zoom, setZoom] = useState(20); // pixels per second
   const [isDragging, setIsDragging] = useState(false);
   const [resizingSceneId, setResizingSceneId] = useState<string | null>(null);
@@ -604,7 +613,60 @@ export default function Timeline({
             <button onClick={() => setZoom(z => Math.max(10, z - 5))} style={{ padding: '4px', color: 'var(--text-secondary)' }} title="Zoom Out"><ZoomOut size={14} /></button>
             <button onClick={() => setZoom(z => Math.min(100, z + 5))} style={{ padding: '4px', color: 'var(--text-secondary)' }} title="Zoom In"><ZoomIn size={14} /></button>
           </div>
-          <button style={{ color: 'var(--text-secondary)' }}><Volume2 size={16} /></button>
+          <div 
+            style={{ position: 'relative' }}
+            onMouseEnter={() => setShowVolumeSlider(true)}
+            onMouseLeave={() => setShowVolumeSlider(false)}
+          >
+            <button 
+              onClick={onToggleMute}
+              style={{ color: isMuted ? '#ef4444' : 'var(--text-secondary)' }}
+            >
+              {isMuted || masterVolume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
+            
+            {showVolumeSlider && (
+              <div style={{
+                position: 'absolute',
+                bottom: '100%',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                padding: '12px 8px',
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border-strong)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '8px',
+                zIndex: 200,
+                width: '32px'
+              }}>
+                <div style={{ height: '80px', width: '4px', background: 'var(--bg-accent)', position: 'relative' }}>
+                  <input 
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={masterVolume}
+                    onChange={(e) => onVolumeChange?.(parseFloat(e.target.value))}
+                    style={{
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%) rotate(-90deg)',
+                      width: '80px',
+                      height: '20px',
+                      background: 'transparent',
+                      appearance: 'none',
+                      cursor: 'pointer',
+                      accentColor: 'var(--brand-accent)'
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: '9px', fontWeight: 800 }}>{Math.round(masterVolume * 100)}</span>
+              </div>
+            )}
+          </div>
           <button onClick={onToggleFullScreen} style={{ color: 'var(--text-secondary)' }}><Maximize size={16} /></button>
         </div>
       </div>

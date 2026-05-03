@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, forwardRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Minimize2, Play, Pause, SkipBack, SkipForward } from 'lucide-react';
+import { Minimize2, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { getAssets } from '../../utils/db';
 import type { Scene, Asset } from '../../types/video';
 
@@ -14,6 +14,9 @@ interface CanvasProps {
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
   aspectRatio?: '16:9' | '9:16';
+  masterVolume?: number;
+  isMuted?: boolean;
+  onVolumeChange?: (v: number) => void;
 }
 
 const AudioLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { src: string, startTime: number, currentTime: number, isPlaying: boolean, volume?: number }) => {
@@ -53,8 +56,14 @@ const AudioLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { sr
   return <audio ref={audioRef} src={src} preload="auto" style={{ display: 'none' }} />;
 };
 
-const VideoLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, startTime: number, currentTime: number, isPlaying: boolean }) => {
+const VideoLayer = ({ src, startTime, currentTime, isPlaying, volume = 1 }: { src: string, startTime: number, currentTime: number, isPlaying: boolean, volume?: number }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.volume = volume;
+    }
+  }, [volume]);
 
   // Sync only on seek or significant drift (> 0.5s)
   useEffect(() => {
@@ -86,7 +95,6 @@ const VideoLayer = ({ src, startTime, currentTime, isPlaying }: { src: string, s
       ref={videoRef} 
       src={src} 
       style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-      muted 
       playsInline 
       loop
       preload="auto"
@@ -104,8 +112,12 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
   onSeek,
   isFullScreen, 
   onToggleFullScreen,
-  aspectRatio = '16:9'
+  aspectRatio = '16:9',
+  masterVolume = 1,
+  isMuted = false,
+  onVolumeChange
 }, ref) => {
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [globalAssets, setGlobalAssets] = useState<Asset[]>([]);
@@ -234,7 +246,7 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
               startTime={scene.startTime}
               currentTime={currentTime}
               isPlaying={isPlaying}
-              volume={scene.volume}
+              volume={(scene.volume ?? 1) * (isMuted ? 0 : masterVolume)}
             />
           );
         })}
@@ -270,7 +282,13 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
                     />
                   )}
                   {scene.type === 'video' && asset && (
-                    <VideoLayer src={asset.url} startTime={scene.startTime} currentTime={currentTime} isPlaying={isPlaying} />
+                    <VideoLayer 
+                      src={asset.url} 
+                      startTime={scene.startTime} 
+                      currentTime={currentTime} 
+                      isPlaying={isPlaying} 
+                      volume={(scene.volume ?? 1) * (isMuted ? 0 : masterVolume)}
+                    />
                   )}
                   {(!scene.type || scene.type === 'text' || scene.type === 'html') && (
                     <div style={{ padding: '8cqw', width: '100%', height: '100%', boxSizing: 'border-box' }}>
@@ -387,6 +405,61 @@ const Canvas = forwardRef<HTMLDivElement, CanvasProps>(({
                       {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" style={{ marginLeft: '4px' }} />}
                     </button>
                     <button onClick={() => onSeek(Math.min(duration, currentTime + 5))} style={{ color: 'var(--text-primary)' }}><SkipForward size={24} strokeWidth={3} /></button>
+                  </div>
+                  
+                  <div 
+                    style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={() => setShowVolumeSlider(true)}
+                    onMouseLeave={() => setShowVolumeSlider(false)}
+                  >
+                    <button 
+                      onClick={() => onVolumeChange?.(isMuted ? (masterVolume || 1) : 0)} 
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      {isMuted || masterVolume === 0 ? <VolumeX size={24} strokeWidth={3} /> : <Volume2 size={24} strokeWidth={3} />}
+                    </button>
+                    
+                    {showVolumeSlider && (
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '100%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        padding: '16px 8px',
+                        background: 'var(--bg-secondary)',
+                        border: '2px solid var(--border-strong)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '12px',
+                        zIndex: 1200,
+                        width: '40px',
+                        marginBottom: '10px'
+                      }}>
+                        <div style={{ height: '100px', width: '4px', background: 'var(--bg-accent)', position: 'relative' }}>
+                          <input 
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={masterVolume}
+                            onChange={(e) => onVolumeChange?.(parseFloat(e.target.value))}
+                            style={{
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%, -50%) rotate(-90deg)',
+                              width: '100px',
+                              height: '24px',
+                              background: 'transparent',
+                              appearance: 'none',
+                              cursor: 'pointer',
+                              accentColor: 'var(--brand-accent)'
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   
                   <span style={{ color: 'var(--brand-accent)', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace' }}>

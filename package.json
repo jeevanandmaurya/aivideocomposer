@@ -14,14 +14,17 @@
     "@ai-sdk/openai-compatible": "^2.0.41",
     "@api/nim": "file:.api/apis/nim",
     "@elevenlabs/elevenlabs-js": "^2.45.0",
+    "@types/three": "^0.184.0",
     "ai": "^6.0.168",
+    "chart.js": "^4.5.1",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.12.0",
     "mp4-muxer": "^5.2.2",
     "openai": "^6.35.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "react-router-dom": "^7.14.2"
+    "react-router-dom": "^7.14.2",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

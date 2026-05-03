@@ -1,73 +1,102 @@
-# React + TypeScript + Vite
+# 🎬 AI Video Composer
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+[![Live Site](https://img.shields.io/badge/Live-Demo-brightgreen?style=for-the-badge&logo=vercel)](https://aivideocomposer.vercel.app/)
+[![YouTube Demo](https://img.shields.io/badge/YouTube-Watch-red?style=for-the-badge&logo=youtube)](https://youtu.be/EG9IYzk9wSg)
 
-Currently, two official plugins are available:
+**AI Video Composer** is a high-performance, AI-driven cinematic orchestration platform. It transforms simple prompts into fully-realized video compositions, complete with synchronized visuals, HTML-based motion graphics, voiceovers, and background music.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 📺 Demo Video
+Check out the AI Video Composer in action:
+[![Watch the video](https://img.youtube.com/vi/EG9IYzk9wSg/maxresdefault.jpg)](https://youtu.be/EG9IYzk9wSg)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## ✨ Key Features
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- **🤖 AI Director**: Uses specialized LLM prompts to orchestrate cinematic narratives.
+- **🎨 Dynamic HTML Overlays**: Real-time rendering of complex CSS layouts, split-screens, and motion typography.
+- **🎙️ Seamless Voiceovers**: Integrated ElevenLabs TTS with precise scene synchronization.
+- **🖼️ Automated Media Sourcing**: Intelligent search and retrieval from Pexels (video/image) and Openverse (audio).
+- **⚙️ Pro-Grade Composition Engine**: Sequential narrative rotation, hardware-accelerated frame rendering, and MP4 muxing.
+- **📱 Responsive Layouts**: Automatically adapts between 16:9 (Horizontal) and 9:16 (Vertical/Shorts) aspect ratios.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 🛠️ Technology Stack
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- **Frontend**: React 19, TypeScript, Vite
+- **Styling**: Vanilla CSS, Framer Motion (for animations)
+- **AI/Backend**: Vercel Edge Functions, AI SDK
+- **Media**: Pexels API, Openverse API
+- **Audio**: ElevenLabs SDK
+- **Export**: mp4-muxer, WebCodecs
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/jeevanandmaurya/aivideocomposer.git
+cd aivideocomposer
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 2. Install Dependencies
+```bash
+npm install
 ```
+
+### 3. Set Up Environment Variables
+Create a `.env.local` file in the root directory and add the following keys:
+
+```env
+# Required for Video/Image Assets
+VITE_PEXELS_API_KEY=your_pexels_api_key
+
+# Required for Voiceovers
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+
+# Required for AI Generation (via Ollama)
+OLLAMA_API_KEY=your_ollama_api_key
+
+# Optional: AI Backup Providers
+VITE_GEMINI_API_KEY=your_gemini_api_key
+VITE_NVIDIA_NIM_API_KEY=your_nvidia_nim_api_key
+```
+
+### 4. Run the Development Server
+```bash
+npm run dev
+```
+
+---
+
+## 🔑 API Requirements
+
+To fully experience AI Video Composer, you will need access to the following APIs:
+
+- **[Ollama](https://ollama.com/)**: Used for the core orchestration logic. Ensure you have your API key/endpoint configured.
+- **[ElevenLabs](https://elevenlabs.io/)**: High-quality AI voice synthesis for narrations.
+- **[Pexels](https://www.pexels.com/api/)**: Sources cinematic stock footage and high-resolution images.
+- **[Openverse](https://openverse.org/)**: Open-source audio and music library (No API key required for basic search).
+
+---
+
+## 📂 Project Structure
+
+- `/api`: Vercel Serverless Functions (AI orchestration & TTS)
+- `/src/components`: UI modules (Timeline, Canvas, Editor)
+- `/src/services`: Core logic (Composition Engine, Media Sourcing)
+- `/src/types`: TypeScript definitions for the video data model
+- `/public`: Static assets and workers
+
+---
+
+## 🌐 Deployment
+The project is optimized for deployment on **Vercel**. Simply connect your repository and add the environment variables in the Vercel dashboard.
+
+---
+
+Made with ❤️ for the AI Video Revolution.

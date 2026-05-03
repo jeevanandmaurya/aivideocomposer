@@ -39,6 +39,8 @@ export default function Editor() {
   const videoCache = useRef<Map<string, HTMLVideoElement>>(new Map());
 
   const [lastSaved, setLastSaved] = useState<number>(Date.now());
+  const [masterVolume, setMasterVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -853,6 +855,9 @@ export default function Editor() {
               isFullScreen={isFullScreen} 
               onToggleFullScreen={() => setIsFullScreen(!isFullScreen)} 
               aspectRatio={project.aspectRatio}
+              masterVolume={masterVolume}
+              isMuted={isMuted}
+              onVolumeChange={setMasterVolume}
             />
           )}
           
@@ -868,6 +873,10 @@ export default function Editor() {
               onToggleFullScreen={() => setIsFullScreen(!isFullScreen)}
               isMobile={isMobile}
               assets={globalAssets}
+              masterVolume={masterVolume}
+              onVolumeChange={setMasterVolume}
+              isMuted={isMuted}
+              onToggleMute={() => setIsMuted(!isMuted)}
             />
           )}
 
